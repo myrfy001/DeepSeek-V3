@@ -53,24 +53,24 @@ class ModelArgs:
     """
     max_batch_size: int = 8
     max_seq_len: int = 4096 * 4
-    dtype: Literal["bf16", "fp8"] = "bf16"
-    vocab_size: int = 102400
-    dim: int = 2048
-    inter_dim: int = 10944
-    moe_inter_dim: int = 1408
-    n_layers: int = 27
-    n_dense_layers: int = 1
-    n_heads: int = 16
+    dtype: Literal["bf16", "fp8"] = "fp8"
+    vocab_size: int = 129280
+    dim: int = 7168
+    inter_dim: int = 18432
+    moe_inter_dim: int = 2048
+    n_layers: int = 1
+    n_dense_layers: int = 3
+    n_heads: int = 128
     # moe
-    n_routed_experts: int = 64
-    n_shared_experts: int = 2
-    n_activated_experts: int = 6
-    n_expert_groups: int = 1
-    n_limited_groups: int = 1
-    score_func: Literal["softmax", "sigmoid"] = "softmax"
-    route_scale: float = 1.
+    n_routed_experts: int = 256
+    n_shared_experts: int = 1
+    n_activated_experts: int = 8
+    n_expert_groups: int = 8
+    n_limited_groups: int = 4
+    score_func: Literal["softmax", "sigmoid"] = "sigmoid"
+    route_scale: float = 2.5
     # mla
-    q_lora_rank: int = 0
+    q_lora_rank: int = 1536
     kv_lora_rank: int = 512
     qk_nope_head_dim: int = 128
     qk_rope_head_dim: int = 64
@@ -263,6 +263,13 @@ class RowParallelLinear(Linear):
             y += self.bias
         return y
 
+def rms_norm(input, normalized_shape, weight, eps=1e-6):
+    if isinstance(normalized_shape, int):
+        normalized_shape = (normalized_shape,)
+    # 计算指定维度的均方根
+    variance = input.pow(2).mean(dim=[-(i+1) for i in range(len(normalized_shape))],
+                               keepdim=True)
+    return weight * (input * torch.rsqrt(variance + eps))
 
 class RMSNorm(nn.Module):
     """
@@ -288,7 +295,8 @@ class RMSNorm(nn.Module):
         Returns:
             torch.Tensor: Normalized tensor with the same shape as input.
         """
-        return F.rms_norm(x, (self.dim,), self.weight, self.eps)
+        return rms_norm(x, (self.dim,), self.weight, self.eps)
+        # return F.rms_norm(x, (self.dim,), self.weight, self.eps)
 
 
 def precompute_freqs_cis(args: ModelArgs) -> torch.Tensor:
@@ -714,6 +722,7 @@ class Block(nn.Module):
         self.attn_norm = RMSNorm(args.dim)
         self.ffn_norm = RMSNorm(args.dim)
 
+    @torch.inference_mode()
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
         """
         Forward pass for the Transformer block.
