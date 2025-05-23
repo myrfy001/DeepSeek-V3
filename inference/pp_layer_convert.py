@@ -18,7 +18,26 @@ from tqdm import tqdm, trange
 from convert import mapping
 
 
+def extract_other_layers(hf_ckpt_path, save_path):
+    os.makedirs(save_path, exist_ok=True)
+    
+    with safe_open(os.path.join(hf_ckpt_path, "model-00001-of-000163.safetensors"), framework="pt", device="cpu") as f:
+        state_dict = {}
+        embed_weight = f.get_tensor("model.embed_tokens.weight")
+        state_dict["weight"] = embed_weight
+    save_file(state_dict, os.path.join(save_path, f"pp_model_layer_embed.safetensors"))
 
+    with safe_open(os.path.join(hf_ckpt_path, "model-00160-of-000163.safetensors"), framework="pt", device="cpu") as f:
+        state_dict = {}
+        embed_weight = f.get_tensor("model.norm.weight")
+        state_dict["weight"] = embed_weight
+    save_file(state_dict, os.path.join(save_path, f"pp_model_layer_norm.safetensors"))
+
+    with safe_open(os.path.join(hf_ckpt_path, "model-00160-of-000163.safetensors"), framework="pt", device="cpu") as f:
+        state_dict = {}
+        embed_weight = f.get_tensor("lm_head.weight")
+        state_dict["weight"] = embed_weight
+    save_file(state_dict, os.path.join(save_path, f"pp_model_layer_head.safetensors"))
 
 def extract_single_layer_param(hf_ckpt_path, save_path, layer_id):
     assert layer_id < 62, "deepseek v3 only have 61 layers"
@@ -62,13 +81,18 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--hf-ckpt-path", type=str, required=True)
     parser.add_argument("--save-path", type=str, required=True)
-    parser.add_argument("--layer-id", type=int, required=False)
+    parser.add_argument("--layer-id", type=str, required=False)
     args = parser.parse_args()
-    assert args.layer_id is None or args.layer_id <= 61, "layer id must <= 61"
+
+    if args.layer_id.isdecimal():
+        args.layer_id = int(args.layer_id)
+        assert args.layer_id <= 61, "layer id must <= 61"
     
     if args.layer_id is None:
         for layer_id in tqdm(range(61)):
             extract_single_layer_param(args.hf_ckpt_path, args.save_path, layer_id)
+    elif args.layer_id == "other":
+        extract_other_layers(args.hf_ckpt_path, args.save_path)
     else:
         extract_single_layer_param(args.hf_ckpt_path, args.save_path, args.layer_id)
 

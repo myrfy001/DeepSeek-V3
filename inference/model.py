@@ -58,7 +58,7 @@ class ModelArgs:
     dim: int = 7168
     inter_dim: int = 18432
     moe_inter_dim: int = 2048
-    n_layers: int = 1
+    n_layers: int = 4
     n_dense_layers: int = 3
     n_heads: int = 128
     # moe
@@ -115,6 +115,9 @@ class ParallelEmbedding(nn.Module):
         Raises:
             ValueError: If `world_size` is not defined.
         """
+
+        assert world_size == 1, "In our z100 PP test, TP is not allowed"
+
         if world_size > 1:
             mask = (x < self.vocab_start_idx) | (x >= self.vocab_end_idx)
             x = x - self.vocab_start_idx
@@ -214,6 +217,9 @@ class ColumnParallelLinear(Linear):
     """
     def __init__(self, in_features: int, out_features: int, bias: bool = False, dtype = None):
         assert out_features % world_size == 0, f"Output features must be divisible by world size (world_size={world_size})"
+        
+        assert world_size == 1, "In our z100 PP test, TP is not allowed"
+        
         self.part_out_features = out_features // world_size
         super().__init__(in_features, self.part_out_features, bias, dtype)
 
@@ -243,6 +249,9 @@ class RowParallelLinear(Linear):
     """
     def __init__(self, in_features: int, out_features: int, bias: bool = False, dtype = None):
         assert in_features % world_size == 0, f"Input features must be divisible by world size (world_size={world_size})"
+        
+        assert world_size == 1, "In our z100 PP test, TP is not allowed"
+        
         self.part_in_features = in_features // world_size
         super().__init__(self.part_in_features, out_features, bias, dtype)
 
@@ -788,6 +797,7 @@ class Transformer(nn.Module):
         """
         seqlen = tokens.size(1)
         h = self.embed(tokens)
+        print(f"start_pos={start_pos}, seqlen={seqlen}")
         freqs_cis = self.freqs_cis[start_pos:start_pos+seqlen]
         mask = None
         if seqlen > 1:

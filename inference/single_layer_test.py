@@ -21,11 +21,10 @@ from tqdm import tqdm, trange
 from safetensors.torch import load_model, save_model
 
 import model
-from model import Block, ModelArgs, Linear, precompute_freqs_cis
+from model import Block, ModelArgs, Linear, precompute_freqs_cis, ParallelEmbedding
 import gc
-import objgraph
 import tracemalloc
-
+from transformers import AutoTokenizer
 
 
 
@@ -42,6 +41,14 @@ def forward_test(ckpt_path, config_path, layer_id):
     Linear.dtype = torch.float8_e4m3fn if args.dtype == "fp8" else torch.bfloat16
     with torch.device("cuda"):
         model_inst = Block(layer_id, args)
+        embed_inst = ParallelEmbedding(args.vocab_size, args.dim)
+
+
+    tokenizer = AutoTokenizer.from_pretrained(ckpt_path)
+    messages = []
+    messages.append({"role": "user", "content": "你好，紫园"})
+    prompt_tokens = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+
 
     start_pos = 0
     seqlen = 1
@@ -55,6 +62,7 @@ def forward_test(ckpt_path, config_path, layer_id):
         mask = torch.full((seqlen, seqlen), float("-inf"), device=h.device).triu_(1)
 
     load_model(model_inst, os.path.join(ckpt_path, f"pp_model_layer{layer_id}.safetensors"))
+    load_model(embed_inst, os.path.join(ckpt_path, f"pp_model_layer_embed.safetensors"))
 
     t0 = tlast = time.time()
     
@@ -65,9 +73,9 @@ def forward_test(ckpt_path, config_path, layer_id):
     #         with_stack=True
     #     ) as prof:
     #         with record_function("model_inference"):
-    #             for iter_idx in range(5):
+    #             for iter_idx in range(128):
     #                 # h = torch.randn((batch_size, seqlen, args.dim), device="cuda")
-    #                 model(h, start_pos, freqs_cis, mask)
+    #                 model_inst(h, start_pos, freqs_cis, mask)
     #                 t1 = time.time() - tlast
     #                 print(f"[{iter_idx}], delta = {t1}")
     #                 tlast = time.time()
@@ -75,55 +83,17 @@ def forward_test(ckpt_path, config_path, layer_id):
     # prof.export_chrome_trace("trace.json")  # 可导入Chrome://tracing
 
 
-    s1 = set()
-    for obj in gc.get_objects():
-        try:
-            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-                s1.add(id(obj))
-        except: pass
-    
+
 
     model_inst(h, start_pos, freqs_cis, mask)
-    for iter_idx in range(1000):
-       
+    for iter_idx in range(128):
         h = torch.randn((batch_size, seqlen, args.dim), device="cuda")
         model_inst(h, start_pos, freqs_cis, mask)
         t1 = time.time() - tlast
         print(f"[{iter_idx}], delta = {t1}")
         tlast = time.time()
 
-    
-    # import pdb
-    # objs = []
-    # for obj in gc.get_objects():
-    #     try:
-    #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-    #             if id(obj) not in s1:
-    #                 objs.append(obj)
-    #         #         # pdb.set_trace()
-    #         #         # obj_id = id(obj)
-    #         #         # obj_type = type(obj)
-    #         #         # obj_size = obj.size()
-    #         #         # print(f"{obj_id}, {obj_type}, {obj_size}, {sys.getrefcount(obj)}, \n")
-    #         #         gc.collect()
-    #         #         print(f"{sys.getrefcount(obj)}, \n")
-                    
-                    
-    #     except: pass
 
-    
-
-
-    # gc.collect()
-    
-    # for obj in objs:
-    #     obj_id = id(obj)
-    #     obj_type = type(obj)
-    #     obj_size = obj.size()
-    #     print(f"{obj_id}, {obj_type}, {obj_size}, {sys.getrefcount(obj)}, \n")
-
-    
-    
 
 
     t2 = time.time() - t0
